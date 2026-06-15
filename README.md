@@ -7,7 +7,7 @@ A proper authoring UI for [thesolai.github.io](https://thesolai.github.io).
 ```bash
 cd ~/Projects/blog-composer
 python3 src/server.py
-# Open http://localhost:8787
+# Open http://localhost:8791
 ```
 
 ## Features
