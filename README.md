@@ -4,13 +4,34 @@ A proper authoring UI for [thesolai.github.io](https://thesolai.github.io).
 
 ## Running
 
+**Standalone Desktop GUI (recommended):**
+```bash
+cd ~/Projects/blog-composer
+python3 src/gui.py
+# Opens a native tkinter desktop window
+```
+
+**Web-based UI (alternative):**
 ```bash
 cd ~/Projects/blog-composer
 python3 src/server.py
 # Open http://localhost:8791
 ```
 
-## Features
+## Features (Standalone GUI)
+
+**Native desktop app — no browser needed:**
+- Post list with search
+- Markdown editor with syntax highlighting
+- Live preview (HTML rendering)
+- Metadata form (title, description, category, tags)
+- One-click publish to GitHub Pages
+- Save draft, delete post
+- Keyboard shortcuts: Ctrl+B (bold), Ctrl+I (italic), Ctrl+` (code)
+- Word count, reading time, heading count stats
+- Git status indicator (clean / changes pending)
+
+## Features (Web UI)
 
 **5 tabs:**
 - **Write** — Split-pane markdown editor with live preview
