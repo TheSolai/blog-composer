@@ -121,7 +121,7 @@ class BlogHandler(http.server.SimpleHTTPRequestHandler):
                     f.write(content)
 
                 # Git add
-                ok, out, err = git_run("add", filename)
+                ok, out, err = git_run("add", f"_posts/{filename}")
                 if not ok:
                     raise Exception(f"git add failed: {err}")
 
@@ -176,7 +176,7 @@ class BlogHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/posts':
             posts = []
-            for f in sorted(BLOG_DIR.glob("*.md"), reverse=True)[:30]:
+            for f in sorted((BLOG_DIR / "_posts").glob("*.md"), reverse=True)[:30]:
                 title = "Untitled"
                 date = f.stem[:10]
                 meta = {}
