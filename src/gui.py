@@ -770,7 +770,7 @@ tags: []
                          f"Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, no filler.\n"
                          f"Tone: {tone_desc}.\n"
                          f"Target: {word_target} words.\n\n"
-                         f"Topic: {topic}\n"
+                         f"Topic: {topic} — focus on: Ollama local AI with qwen3.5:35b model, Python desktop app, Wikipedia research, Tkinter GUI. Do NOT mention GPT-4, OpenAI API, or external cloud services.\n"
                          f"{research_context}\n\n"
                          f"Structure:\n{structure_str}\n\n"
                          f"Format: Return ONLY Markdown. Start with first heading. No preamble.")
@@ -987,7 +987,7 @@ tags: []
         structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
         prompt = (
             "Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-            "Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler.\n"
+            "Voice: Sol AI blog (thesolai.github.io) — Walter White meets Sherlock Holmes. Direct, competent, no filler. Writes about: Ollama local AI, Python, qwen3.5:35b, desktop tools.\n"
             f"Tone: {tone_desc}.\n"
             f"Target: {word_target} words.\n\n"
             f"Topic: {topic}\n"
