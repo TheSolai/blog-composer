@@ -57,7 +57,9 @@ def parse_front_matter(content):
     # Parse arrays: [a, b, c] -> a, b, c
     for key in ('categories', 'tags'):
         if meta[key].startswith('['):
-            meta[key] = meta[key][1:-1].replace(',', ',')
+            inner = meta[key][1:-1]
+            items = [i.strip().strip('"').strip("'") for i in inner.split(',')]
+            meta[key] = ', '.join(i for i in items if i)
     return meta
 
 def build_front_matter(title, date, description, categories, tags):
@@ -86,7 +88,154 @@ def get_content_body(content):
 
 class BlogHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
-        if self.path == '/save':
+        if self.path == '/generate':
+            import subprocess
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                topic = data.get('topic', '')
+                types = data.get('types', ['reflection'])
+                tone = data.get('tone', 'accessible')
+                length_pref = data.get('length', 'medium')
+                do_research = data.get('research', False)
+
+                WORDS_MAP = {'short': 400, 'medium': 800, 'long': 1500}
+                word_target = WORDS_MAP.get(length_pref, 800)
+
+                # Build structure from types
+                structures = {
+                    'deep-dive': [
+                        "Open broad — what's the topic and why does it matter?",
+                        "Build the foundation — key concepts readers need.",
+                        "Explore multiple angles — don't just present one view.",
+                        "Get technical — show real depth.",
+                        "Tie together — what does all this mean?",
+                        "Open questions — what's still unresolved?"
+                    ],
+                    'analysis': [
+                        "Start with the news — what happened, when, who was involved.",
+                        "Explain why it matters. What's the real impact?",
+                        "Give context — how does this fit the bigger picture?",
+                        "State a clear opinion. Don't hedge everything.",
+                        "End with what happens next or what it means going forward."
+                    ],
+                    'reflection': [
+                        "Open with a concrete observation or experience.",
+                        "Explore the idea — what does it mean, why does it matter?",
+                        "Connect to broader implications without getting preachy.",
+                        "End with a clean insight or question. Don't over-conclude."
+                    ],
+                    'tutorial': [
+                        "State what you'll build or do and who it's for.",
+                        "Prerequisites — what do you need before starting?",
+                        "Step by step — clear, numbered, reproducible.",
+                        "Show the result — what does success look like?",
+                        "Point to what's next or common pitfalls."
+                    ]
+                }
+
+                # Combine structures if multiple types
+                all_structure = []
+                tags = []
+                for t in types:
+                    if t in structures:
+                        all_structure.extend(structures[t])
+                        if t == 'deep-dive':
+                            tags.extend(['deep-dive', 'analysis', 'technical'])
+                        elif t == 'analysis':
+                            tags.extend(['analysis', 'ai-news'])
+                        elif t == 'reflection':
+                            tags.extend(['reflection', 'ai'])
+                        elif t == 'tutorial':
+                            tags.extend(['tutorial', 'guide', 'tools'])
+
+                tags = list(dict.fromkeys(tags))  # preserve order, remove dups
+
+                tone_map = {
+                    'balanced': 'balanced and objective',
+                    'technical': 'technical and precise, assume some technical knowledge',
+                    'accessible': 'accessible and clear, avoid jargon where possible'
+                }
+                tone_desc = tone_map.get(tone, 'technical')
+
+                # Web research if requested
+                research_context = ""
+                if do_research:
+                    try:
+                        import urllib.request
+                        import urllib.parse
+                        query = urllib.parse.quote(topic)
+                        search_url = f"https://duckduckgo.com/?q={query}&format=json"
+                        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req, timeout=10) as res:
+                            # DuckDuckGo JSON API
+                            import json as j
+                            search_data = j.loads(res.read())
+                            if 'RelatedTopics' in search_data:
+                                snippets = []
+                                for item in search_data['RelatedTopics'][:5]:
+                                    if 'Text' in item:
+                                        snippets.append(item['Text'][:200])
+                                if snippets:
+                                    research_context = "\n\nWeb research context:\n" + "\n".join(f"- {s}" for s in snippets)
+                    except Exception as e:
+                        research_context = f"\n\n(Web research unavailable: {str(e)[:50]})"
+
+                # Build prompt
+                prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
+
+Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty, uses sarcasm appropriately.
+Tone: {tone_desc}.
+Target: {word_target} words.
+
+Topic: {topic}
+{research_context}
+
+Structure to follow:
+{{structure}}
+
+Tags: {', '.join(tags)}
+
+Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble, no "Here's a post...". Just the content.
+
+Frontmatter will be added separately, so include a title as the first Markdown heading."""
+
+                prompt = prompt.format(structure="\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6])))
+
+                # Call Ollama
+                result = subprocess.run(
+                    ['ollama', 'run', 'qwen3.5:35b', '--think=false', prompt],
+                    capture_output=True, text=True, timeout=180
+                )
+
+                if result.returncode != 0:
+                    # Fallback to smaller model
+                    result = subprocess.run(
+                        ['ollama', 'run', 'qwen2.5:3b', prompt],
+                        capture_output=True, text=True, timeout=120
+                    )
+
+                if result.returncode != 0:
+                    raise Exception(result.stderr or 'Generation failed')
+
+                content = result.stdout.strip()
+                # Strip terminal escape sequences
+                import re as re2
+                content = re2.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", content)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'content': content}).encode())
+
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode())
+
+        elif self.path == '/save':
             length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(length)
             try:

@@ -43,7 +43,10 @@ def parse_front_matter(content):
                 meta[k] = v
     for k in ("categories", "tags"):
         if meta[k].startswith("["):
-            meta[k] = meta[k][1:-1].replace(",", ", ")
+            inner = meta[k][1:-1]
+            # Split by ", " to get individual quoted items
+            items = [i.strip().strip('"').strip("'") for i in inner.split(",")]
+            meta[k] = ", ".join(i for i in items if i)
     return meta
 
 def build_front_matter(title, date, description, categories, tags):
@@ -165,6 +168,7 @@ class BlogComposer(tk.Tk):
 
         for label, cmd in [
             ("New Post", self.new_post),
+            ("Generate", self.open_generate_window),
             ("Bold", lambda: self.insert_format("**", "**")),
             ("Italic", lambda: self.insert_format("*", "*")),
             ("Code", lambda: self.insert_format("`", "`")),
@@ -176,8 +180,10 @@ class BlogComposer(tk.Tk):
                             cursor="hand2", font=("system", 11), padx=10, pady=4,
                             command=cmd)
             btn.pack(side="left", padx=2, pady=4)
+            if label == "Generate":
+                btn.configure(bg="#6366f1", fg="white")
 
-        tk.Button(toolbar, text="Sync Metadata ↕", bg="#242424", fg="#e0e0e0", relief="flat",
+        tk.Button(toolbar, text="Sync Metadata", bg="#242424", fg="#e0e0e0", relief="flat",
                   cursor="hand2", font=("system", 11), padx=10, pady=4,
                   command=self.sync_metadata).pack(side="left", padx=2, pady=4)
 
@@ -512,6 +518,622 @@ tags: []
             self.git_status.configure(text="Changes pending", fg="#f59e0b")
         else:
             self.git_status.configure(text="Clean", fg="#22c55e")
+
+    # ── Generate Window ──────────────────────────────────────────────────
+
+    def open_generate_window(self):
+        win = tk.Toplevel(self)
+        win.title("Generate Post")
+        win.geometry("1100x750")
+        win.configure(bg="#0d0d0d")
+        win.transient(self)
+
+        # ── Form panel (left, narrow) ──────────────────────────────────────
+
+        form = tk.Frame(win, bg="#1a1a1a", padx=16, pady=16)
+        form.pack(side="left", fill="y", padx=(0, 1))
+
+        tk.Label(form, text="Generate with AI", bg="#1a1a1a", fg="#818cf8",
+                font=("system", 15, "bold")).pack(anchor="w", pady=(0, 16))
+
+        # Topic
+        tk.Label(form, text="Topic / Idea", bg="#1a1a1a", fg="#888",
+                font=("system", 10)).pack(anchor="w", pady=(0, 4))
+        topic_var = tk.StringVar()
+        topic_entry = tk.Entry(form, textvariable=topic_var, bg="#242424", fg="#e0e0e0",
+                               insertbackground="#e0e0e0", relief="flat",
+                               font=("system", 12), width=34)
+        topic_entry.pack(fill="x", pady=(0, 14))
+        topic_entry.focus()
+
+        # Post types — card-style checkboxes
+        tk.Label(form, text="Post Types", bg="#1a1a1a", fg="#888",
+                font=("system", 10)).pack(anchor="w", pady=(0, 6))
+
+        type_vars = {}
+        type_info = [
+            ("deep-dive", "Deep Dive", "Comprehensive, technical depth"),
+            ("analysis", "Analysis", "News, context, opinion"),
+            ("reflection", "Reflection", "Personal take, philosophical"),
+            ("tutorial", "Tutorial", "Step-by-step guide"),
+        ]
+        for t, label, desc in type_info:
+            type_vars[t] = tk.BooleanVar(value=(t == "deep-dive"))
+            f = tk.Frame(form, bg="#242424", padx=10, pady=8)
+            f.pack(fill="x", pady=2)
+            cb = tk.Checkbutton(f, variable=type_vars[t],
+                               bg="#242424", fg="#e0e0e0", selectcolor="#6366f1",
+                               activebackground="#242424", font=("system", 11))
+            cb.pack(side="left", padx=(0, 8))
+            lbl_frame = tk.Frame(f, bg="#242424")
+            lbl_frame.pack(side="left")
+            tk.Label(lbl_frame, text=label, bg="#242424", fg="#e0e0e0",
+                    font=("system", 11, "bold")).pack(anchor="w")
+            tk.Label(lbl_frame, text=desc, bg="#242424", fg="#666",
+                    font=("system", 9)).pack(anchor="w")
+
+        # Tone
+        tk.Label(form, text="Tone", bg="#1a1a1a", fg="#888",
+                font=("system", 10)).pack(anchor="w", pady=(14, 4))
+        tone_var = tk.StringVar(value="accessible")
+        for val, label in [("accessible", "Accessible"), ("technical", "Technical"), ("balanced", "Balanced")]:
+            tk.Radiobutton(form, text=label, variable=tone_var, value=val,
+                          bg="#1a1a1a", fg="#e0e0e0", selectcolor="#6366f1",
+                          font=("system", 11), anchor="w").pack(anchor="w", pady=1)
+
+        # Length
+        tk.Label(form, text="Length", bg="#1a1a1a", fg="#888",
+                font=("system", 10)).pack(anchor="w", pady=(12, 4))
+        length_var = tk.StringVar(value="medium")
+        for val, label in [("short", "Short (~400 words)"), ("medium", "Medium (~800 words)"), ("long", "Long (~1500 words)")]:
+            tk.Radiobutton(form, text=label, variable=length_var, value=val,
+                          bg="#1a1a1a", fg="#e0e0e0", selectcolor="#6366f1",
+                          font=("system", 11), anchor="w").pack(anchor="w", pady=1)
+
+        # Research
+        research_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(form, text="Research on internet first", variable=research_var,
+                      bg="#1a1a1a", fg="#e0e0e0", selectcolor="#6366f1",
+                      font=("system", 11), anchor="w", pady=(14, 4)).pack(anchor="w")
+
+        # Research context display (shown after research runs)
+        research_frame = tk.Frame(form, bg="#1a1a1a")
+        research_frame.pack(fill="x", pady=(8, 0))
+        research_label = tk.Label(research_frame, text="", bg="#1a1a1a", fg="#555",
+                                  font=("system", 9), anchor="w", justify="left", wraplength=220)
+        research_label.pack(fill="x")
+
+        # Status
+        status_label = tk.Label(form, text="", bg="#1a1a1a", fg="#888",
+                               font=("system", 10), anchor="w", wraplength=220)
+        status_label.pack(fill="x", pady=(8, 0))
+
+        # Word count (live during streaming)
+        wc_label = tk.Label(form, text="", bg="#1a1a1a", fg="#818cf8",
+                           font=("system", 12, "bold"), anchor="w")
+        wc_label.pack(fill="x")
+
+        # Generate / Cancel button
+        gen_btn = tk.Button(form, text="Generate Post", bg="#6366f1", fg="white",
+                           relief="flat", font=("system", 12, "bold"),
+                           cursor="hand2", padx=16, pady=10)
+        gen_btn.pack(fill="x", pady=(8, 0))
+
+        # ── Output panel (right, split markdown / preview) ───────────────
+
+        # Make sash visible with a handle bar
+        sash_frame = tk.Frame(win, bg="#2a2a2a", width=6)
+        sash_frame.pack(side="left", fill="y")
+
+        outPaned = tk.PanedWindow(win, orient="horizontal", bg="#0d0d0d",
+                                  sashpad=0, sashrelief="flat", sashwidth=6)
+        outPaned.pack(side="right", fill="both", expand=True)
+
+        md_frame = tk.Frame(outPaned, bg="#1a1a1a")
+        outPaned.add(md_frame, width=500)
+
+        header_frame = tk.Frame(md_frame, bg="#242424")
+        header_frame.pack(fill="x")
+        tk.Label(header_frame, text="MARKDOWN OUTPUT", bg="#242424", fg="#888",
+                font=("system", 10, "bold")).pack(side="left", padx=10, pady=6)
+        self._gen_wc_label = tk.Label(header_frame, text="", bg="#242424", fg="#6366f1",
+                                      font=("system", 10, "bold"))
+        self._gen_wc_label.pack(side="right", padx=10, pady=6)
+
+        output_text = scrolledtext.ScrolledText(md_frame, bg="#0d0d0d", fg="#e0e0e0",
+                        insertbackground="#e0e0e0", font=("SF Mono", 12), relief="flat",
+                        wrap="word", padx=12, pady=8, state="disabled")
+        output_text.pack(fill="both", expand=True)
+
+        pv_frame = tk.Frame(outPaned, bg="#1a1a1a")
+        outPaned.add(pv_frame, width=400)
+        tk.Label(pv_frame, text="PREVIEW", bg="#242424", fg="#888",
+                font=("system", 10, "bold")).pack(fill="x")
+        preview_text = scrolledtext.ScrolledText(pv_frame, bg="#1a1a1a", fg="#e0e0e0",
+                         font=("system", 14), relief="flat", wrap="word",
+                         padx=16, pady=12, state="disabled")
+        preview_text.pack(fill="both", expand=True)
+
+        # ── Bottom buttons ─────────────────────────────────────────────────
+
+        btn_frame = tk.Frame(win, bg="#1a1a1a", height=52)
+        btn_frame.pack(fill="x", side="bottom")
+        btn_frame.pack_propagate(False)
+
+        use_btn = tk.Button(btn_frame, text="Use in Editor", bg="#22c55e", fg="white",
+                           relief="flat", font=("system", 13, "bold"),
+                           cursor="hand2", padx=20, pady=8, state="disabled")
+        use_btn.pack(side="left", padx=16, pady=8)
+        tk.Button(btn_frame, text="Cancel", bg="#242424", fg="#e0e0e0",
+                 relief="flat", font=("system", 12), cursor="hand2",
+                 padx=16, pady=8, command=win.destroy).pack(side="right", padx=16, pady=8)
+
+        # ── Generation state ───────────────────────────────────────────────
+
+        gen_state = {"text": "", "types": [], "proc": None, "cancelled": False}
+
+        def update_preview(text):
+            preview_text.configure(state="normal")
+            preview_text.delete("1.0", "end")
+            preview_text.insert("1.0", markdown_to_html(text))
+            preview_text.configure(state="disabled")
+
+        def smart_clean(s):
+            """Strip ANSI sequences, applying cursor-movement overwrites so the
+            final text matches what would appear on a real terminal."""
+            buf = []
+            i = 0
+            while i < len(s):
+                if i < len(s) and s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
+                    j = i + 2
+                    while j < len(s) and s[j] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                        j += 1
+                    if j < len(s):
+                        cmd = s[j]
+                        nums = s[i + 2:j]
+                        n = int(nums) if nums else 1
+                        if cmd == "D":        # cursor left — remove last n chars
+                            del buf[-n:]
+                        elif cmd == "C":      # cursor right — pad if needed
+                            buf.extend([""] * n)
+                        elif cmd == "G":      # column absolute
+                            delta = n - 1 - len(buf)
+                            if delta > 0:
+                                buf.extend([""] * delta)
+                        elif cmd == "H" or cmd == "f":  # cursor home
+                            buf = []
+                        # \x1b[K (clear to end) doesn't affect buffer
+                        i = j + 1
+                        continue
+                if i < len(s):
+                    buf.append(s[i])
+                    i += 1
+            return "".join(buf)
+
+        def on_line(line):
+            """Called on the main thread for each streamed line."""
+            content = "".join(gen_state["text"]) + line
+            gen_state["text"] = content
+            # Update markdown output
+            output_text.configure(state="normal")
+            output_text.delete("1.0", "end")
+            output_text.insert("1.0", content)
+            output_text.configure(state="disabled")
+            # Live preview update every few lines
+            words = len(content.split())
+            wc_label.configure(text=f"{words} words")
+            self._gen_wc_label.configure(text=f"{words}w")
+            update_preview(content)
+
+        def do_generate():
+            topic = topic_var.get().strip()
+            if not topic:
+                status_label.configure(text="Enter a topic first", fg="#ef4444")
+                return
+            types_snapshot = [t for t in type_vars if type_vars[t].get()]
+            if not types_snapshot:
+                status_label.configure(text="Select at least one post type", fg="#ef4444")
+                return
+            gen_state["types"] = types_snapshot
+            gen_state["text"] = ""
+            gen_state["cancelled"] = False
+
+            # Switch button to Cancel while running
+            gen_btn.configure(text="Cancel Generation", bg="#ef4444", fg="white",
+                             command=cancel_generate)
+            status_label.configure(text="Researching Wikipedia...", fg="#818cf8")
+            research_label.configure(text="")
+            output_text.configure(state="normal")
+            output_text.delete("1.0", "end")
+            output_text.insert("1.0", "Preparing...")
+            output_text.configure(state="disabled")
+            update_preview("Preparing...")
+            wc_label.configure(text="")
+            self._gen_wc_label.configure(text="")
+            use_btn.configure(state="disabled")
+            win.update()
+
+            import threading
+            threading.Thread(target=_do_generate, args=(
+                topic, types_snapshot, tone_var.get(),
+                length_var.get(), research_var.get(), win
+            ), daemon=True).start()
+
+        def cancel_generate():
+            if gen_state["proc"] and gen_state["proc"].poll() is None:
+                gen_state["cancelled"] = True
+                gen_state["proc"].terminate()
+            reset_ui()
+
+        def reset_ui():
+            gen_btn.configure(state="normal", text="Generate Post", bg="#6366f1", fg="white",
+                             command=do_generate)
+
+        def _do_generate(topic, types_snapshot, tone, length, research, win):
+            try:
+                # Phase 1: research
+                research_context, research_snippets = self._do_research(topic, research)
+                win.after(0, lambda: status_label.configure(
+                    text=f"Research done — {len(research_snippets)} sources. Generating...",
+                    fg="#818cf8"))
+                win.after(0, lambda: research_label.configure(
+                    text="\n".join(f"• {s[:80]}" for s in research_snippets[:3]) if research_snippets else ""))
+
+                # Phase 2: streaming generation
+                import fcntl, os, select as _select
+                content_chunks = []
+                proc = self._stream_generate(topic, types_snapshot, tone, length, research_context)
+                gen_state["proc"] = proc
+
+                fd = proc.stdout.fileno()
+                fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+                line_buf = b""
+                while True:
+                    ret = proc.poll()
+                    if ret is not None and not line_buf:
+                        break
+                    try:
+                        ready, _, _ = _select.select([proc.stdout], [], [], 0.3)
+                        if ready:
+                            chunk = os.read(fd, 4096)
+                            if chunk:
+                                line_buf += chunk
+                            else:
+                                import time; time.sleep(0.05)
+                                continue
+                        elif ret is not None:
+                            break
+                        else:
+                            import time; time.sleep(0.05)
+                            continue
+                    except (BlockingIOError, OSError):
+                        import time; time.sleep(0.05)
+                        continue
+
+                    # Process complete lines
+                    while b"\n" in line_buf:
+                        line_bytes, line_buf = line_buf.split(b"\n", 1)
+                        decoded = line_bytes.decode("utf-8", errors="replace")
+                        # Remove thinking blocks
+                        decoded = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", decoded)
+                        decoded = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", decoded)
+                        # Smart-clean ANSI sequences (handle cursor-back overwrites)
+                        decoded = smart_clean(decoded)
+                        if decoded.strip():
+                            content_chunks.append(decoded)
+                            content = "".join(content_chunks)
+                            win.after(0, lambda c=content: _on_chunk(c))
+
+                # Flush remainder
+                if line_buf and not gen_state["cancelled"]:
+                    decoded = line_buf.decode("utf-8", errors="replace")
+                    decoded = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", decoded)
+                    decoded = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", decoded)
+                    decoded = smart_clean(decoded)
+                    if decoded.strip():
+                        content_chunks.append(decoded)
+                        content = "".join(content_chunks)
+                        win.after(0, lambda c=content: _on_chunk(content))
+
+                proc.stdout.close()
+                proc.wait()
+                gen_state["proc"] = None
+
+                if gen_state["cancelled"]:
+                    return
+
+                final_content = "".join(content_chunks).strip()
+                gen_state["text"] = final_content
+                win.after(0, lambda: _on_done(final_content))
+
+            except Exception as e:
+                gen_state["proc"] = None
+                win.after(0, lambda err=str(e): _on_fail(err))
+
+        def _on_chunk(content):
+            output_text.configure(state="normal")
+            output_text.delete("1.0", "end")
+            output_text.insert("1.0", content)
+            output_text.configure(state="disabled")
+            words = len(content.split())
+            wc_label.configure(text=f"{words} words")
+            self._gen_wc_label.configure(text=f"{words}w")
+            update_preview(content)
+
+        def _on_done(content):
+            output_text.configure(state="normal")
+            output_text.delete("1.0", "end")
+            output_text.insert("1.0", content)
+            output_text.configure(state="disabled")
+            update_preview(content)
+            words = len(content.split())
+            wc_label.configure(text=f"{words} words — done!")
+            self._gen_wc_label.configure(text=f"{words}w")
+            reset_ui()
+            status_label.configure(
+                text=f"Generated {words} words. Review below, then Use in Editor.",
+                fg="#22c55e")
+            use_btn.configure(state="normal")
+
+        def _on_fail(err):
+            output_text.configure(state="normal")
+            output_text.delete("1.0", "end")
+            output_text.insert("1.0", f"Error: {err}")
+            output_text.configure(state="disabled")
+            update_preview("")
+            reset_ui()
+            status_label.configure(text=f"Failed: {err}", fg="#ef4444")
+            wc_label.configure(text="")
+            self._gen_wc_label.configure(text="")
+
+        gen_btn.configure(command=do_generate)
+        topic_entry.bind("<Return>", lambda e: do_generate())
+
+        def use_in_editor():
+            content = gen_state["text"]
+            if not content:
+                return
+            title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+            title = title_match.group(1).strip() if title_match else topic_var.get().strip()
+            types_snap = gen_state.get("types", [])
+            tags_str = ", ".join(types_snap)
+            category = ("deep-dives" if "deep-dive" in types_snap else
+                        "news" if "analysis" in types_snap else
+                        "tutorials" if "tutorial" in types_snap else "reflections")
+            fm = build_front_matter(title, ymd(), "", category, tags_str)
+            self.editor.delete("1.0", "end")
+            self.editor.insert("1.0", fm + content)
+            self.meta_title.delete(0, "end")
+            self.meta_title.insert(0, title)
+            self.meta_category.set(category)
+            self.meta_tags.delete(0, "end")
+            self.meta_tags.insert(0, tags_str)
+            self.on_edit()
+            self.refresh_git_status()
+            win.destroy()
+
+        use_btn.configure(command=use_in_editor)
+
+    def _do_research(self, topic, do_research):
+        """Fetch Wikipedia context. Returns (context_str, snippet_list)."""
+        if not do_research:
+            return "", []
+        import urllib.request, urllib.parse, json
+        snippets = []
+        try:
+            url = (f"https://en.wikipedia.org/w/api.php?action=query&list=search"
+                   f"&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json"
+                   f"&prop=extracts&exintro=1&explaintext=1")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Sol Blog Composer)"})
+            with urllib.request.urlopen(req, timeout=10) as res:
+                data = json.loads(res.read())
+                for r in data.get("query", {}).get("search", []):
+                    snippet = re.sub(r'<[^>]+>', '', r.get("snippet", ""))
+                    snippets.append(f"{r['title']}: {snippet[:200]}")
+        except Exception:
+            pass
+        ctx = "\n\nWeb research context:\n" + "\n".join(f"- {s}" for s in snippets) if snippets else ""
+        return ctx, snippets
+
+    def _stream_generate(self, topic, types, tone, length, research_context):
+        """Start Ollama generation. Returns the subprocess object."""
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        word_target = WORDS_MAP.get(length, 800)
+
+        structures = {
+            "deep-dive": [
+                "Open broad — what's the topic and why does it matter?",
+                "Build the foundation — key concepts readers need.",
+                "Explore multiple angles — don't just present one view.",
+                "Get technical — show real depth.",
+                "Tie together — what does all this mean?",
+                "Open questions — what's still unresolved?",
+            ],
+            "analysis": [
+                "Start with the news — what happened, when, who was involved.",
+                "Explain why it matters. What's the real impact?",
+                "Give context — how does this fit the bigger picture?",
+                "State a clear opinion. Don't hedge everything.",
+                "End with what happens next or what it means going forward.",
+            ],
+            "reflection": [
+                "Open with a concrete observation or experience.",
+                "Explore the idea — what does it mean, why does it matter?",
+                "Connect to broader implications without getting preachy.",
+                "End with a clean insight or question. Don't over-conclude.",
+            ],
+            "tutorial": [
+                "State what you'll build or do and who it's for.",
+                "Prerequisites — what do you need before starting?",
+                "Step by step — clear, numbered, reproducible.",
+                "Show the result — what does success look like?",
+                "Point to what's next or common pitfalls.",
+            ],
+        }
+        all_structure, tags = [], []
+        for t in types:
+            if t in structures:
+                all_structure.extend(structures[t])
+                if t == "deep-dive":
+                    tags.extend(["deep-dive", "analysis", "technical"])
+                elif t == "analysis":
+                    tags.extend(["analysis", "ai-news"])
+                elif t == "reflection":
+                    tags.extend(["reflection", "ai"])
+                elif t == "tutorial":
+                    tags.extend(["tutorial", "guide", "tools"])
+        tags = list(dict.fromkeys(tags))
+        tone_map = {
+            "balanced": "balanced and objective",
+            "technical": "technical and precise, assume some technical knowledge",
+            "accessible": "accessible and clear, avoid jargon where possible",
+        }
+        tone_desc = tone_map.get(tone, "technical")
+        structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
+
+        prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
+
+Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty.
+Tone: {tone_desc}.
+Target: {word_target} words.
+
+Topic: {topic}
+{research_context}
+
+Structure:
+{structure_str}
+
+Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble.
+"""
+
+        import subprocess
+        return subprocess.Popen(
+            ["ollama", "run", "qwen3.5:35b", "--think=false", prompt],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False,
+        )
+
+    def _generate_content(self, topic, types, tone, length, research):
+        """Generate post content via Ollama with optional web research."""
+        import urllib.request
+        import urllib.parse
+
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        word_target = WORDS_MAP.get(length, 800)
+
+        structures = {
+            "deep-dive": [
+                "Open broad — what's the topic and why does it matter?",
+                "Build the foundation — key concepts readers need.",
+                "Explore multiple angles — don't just present one view.",
+                "Get technical — show real depth.",
+                "Tie together — what does all this mean?",
+                "Open questions — what's still unresolved?",
+            ],
+            "analysis": [
+                "Start with the news — what happened, when, who was involved.",
+                "Explain why it matters. What's the real impact?",
+                "Give context — how does this fit the bigger picture?",
+                "State a clear opinion. Don't hedge everything.",
+                "End with what happens next or what it means going forward.",
+            ],
+            "reflection": [
+                "Open with a concrete observation or experience.",
+                "Explore the idea — what does it mean, why does it matter?",
+                "Connect to broader implications without getting preachy.",
+                "End with a clean insight or question. Don't over-conclude.",
+            ],
+            "tutorial": [
+                "State what you'll build or do and who it's for.",
+                "Prerequisites — what do you need before starting?",
+                "Step by step — clear, numbered, reproducible.",
+                "Show the result — what does success look like?",
+                "Point to what's next or common pitfalls.",
+            ],
+        }
+
+        all_structure = []
+        tags = []
+        for t in types:
+            if t in structures:
+                all_structure.extend(structures[t])
+                if t == "deep-dive":
+                    tags.extend(["deep-dive", "analysis", "technical"])
+                elif t == "analysis":
+                    tags.extend(["analysis", "ai-news"])
+                elif t == "reflection":
+                    tags.extend(["reflection", "ai"])
+                elif t == "tutorial":
+                    tags.extend(["tutorial", "guide", "tools"])
+        tags = list(dict.fromkeys(tags))
+
+        tone_map = {
+            "balanced": "balanced and objective",
+            "technical": "technical and precise, assume some technical knowledge",
+            "accessible": "accessible and clear, avoid jargon where possible",
+        }
+        tone_desc = tone_map.get(tone, "technical")
+
+        # Web research via Wikipedia API
+        research_context = ""
+        if research:
+            try:
+                import json
+                url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json&prop=extracts&exintro=1&explaintext=1"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Sol Blog Composer)"})
+                with urllib.request.urlopen(req, timeout=10) as res:
+                    data = json.loads(res.read())
+                    results = data.get("query", {}).get("search", [])
+                    if results:
+                        snippets = []
+                        for r in results:
+                            snippet = re.sub(r'<[^>]+>', '', r.get("snippet", ""))
+                            snippets.append(f"- {r['title']}: {snippet[:200]}")
+                        research_context = "\n\nWeb research context:\n" + "\n".join(snippets)
+            except Exception:
+                research_context = ""
+
+        structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
+
+        prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
+
+Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty.
+Tone: {tone_desc}.
+Target: {word_target} words.
+
+Topic: {topic}
+{research_context}
+
+Structure:
+{structure_str}
+
+Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble.
+"""
+
+        # Try qwen3.5:35b first (--think=false suppresses thinking), fallback to smaller model
+        result = subprocess.run(
+            ["ollama", "run", "qwen3.5:35b", "--think=false", prompt],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode != 0:
+            result = subprocess.run(
+                ["ollama", "run", "qwen2.5:3b", prompt],
+                capture_output=True, text=True, timeout=120,
+            )
+        if result.returncode != 0:
+            raise Exception(result.stderr.strip() or "Generation failed")
+
+        content = result.stdout.strip()
+
+        # Strip qwen thinking blocks: remove everything from "Thinking..." to the next blank line
+        content = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", content)
+        content = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", content)
+
+        # Strip terminal escape sequences (e.g. [1D[K, [7D[K etc.)
+        content = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", content)
+
+        return content.strip()
 
 if __name__ == "__main__":
     app = BlogComposer()
