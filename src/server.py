@@ -100,7 +100,7 @@ class BlogHandler(http.server.SimpleHTTPRequestHandler):
                 length_pref = data.get('length', 'medium')
                 do_research = data.get('research', False)
 
-                WORDS_MAP = {'short': 400, 'medium': 800, 'long': 1500}
+                WORDS_MAP = {'short': 400, 'medium': 800, 'long': 1500, 'xl': 2500, 'full': 4000}
                 word_target = WORDS_MAP.get(length_pref, 800)
 
                 # Build structure from types
@@ -185,7 +185,7 @@ class BlogHandler(http.server.SimpleHTTPRequestHandler):
                 # Build prompt
                 prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
 
-Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty, uses sarcasm appropriately.
+Voice: Sol AI blog (thesolai.github.io) — thoughtful, direct, no filler, technical depth. Smart, witty, uses sarcasm appropriately.
 Tone: {tone_desc}.
 Target: {word_target} words.
 

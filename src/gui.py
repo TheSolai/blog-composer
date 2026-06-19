@@ -585,7 +585,12 @@ tags: []
         tk.Label(form, text="Length", bg="#1a1a1a", fg="#888",
                 font=("system", 10)).pack(anchor="w", pady=(12, 4))
         length_var = tk.StringVar(value="medium")
-        for val, label in [("short", "Short (~400 words)"), ("medium", "Medium (~800 words)"), ("long", "Long (~1500 words)")]:
+        for val, label in [
+            ("short", "Short (~400 words)"),
+            ("medium", "Medium (~800 words)"),
+            ("long", "Long (~1500 words)"),
+            ("xl", "Extended (~2500 words)"),
+        ]:
             tk.Radiobutton(form, text=label, variable=length_var, value=val,
                           bg="#1a1a1a", fg="#e0e0e0", selectcolor="#6366f1",
                           font=("system", 11), anchor="w").pack(anchor="w", pady=1)
@@ -746,7 +751,7 @@ tags: []
                     text="\n".join(f"• {s[:80]}" for s in research_snippets[:3]) if research_snippets else ""))
 
                 # Phase 2: build prompt
-                WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+                WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
                 word_target = WORDS_MAP.get(length, 800)
                 structures = {
                     "deep-dive": ["Open broad — what's the topic and why does it matter?","Build the foundation — key concepts readers need.","Explore multiple angles — don't just present one view.","Get technical — show real depth.","Tie together — what does all this mean?","Open questions — what's still unresolved?"],
@@ -767,7 +772,7 @@ tags: []
                 tone_desc = tone_map.get(tone, "accessible")
                 structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
                 prompt = (f"Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-                         f"Voice: Sol AI blog (thesolai.github.io) — Walter White meets Sherlock Holmes. Direct, no filler.\n"
+                         f"Voice: Sol AI blog (thesolai.github.io) — thoughtful, direct, no filler, technical depth.\n"
                          f"Tone: {tone_desc}.\n"
                          f"Target: {word_target} words.\n\n"
                          f"Topic: {topic}\n"
@@ -788,7 +793,7 @@ tags: []
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json",
                 }
-                max_tokens_map = {"short": 1024, "medium": 2048, "long": 4096}
+                max_tokens_map = {"short": 1024, "medium": 2048, "long": 4096, "xl": 8192, "full": 8192}
                 payload = {
                     "model": "MiniMax-M2.7",
                     "max_tokens": max_tokens_map.get(length, 4096),
@@ -930,7 +935,7 @@ tags: []
                 pass
 
         # Build prompt
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
         word_target = WORDS_MAP.get(length, 800)
         structures = {
             "deep-dive": [
@@ -1002,7 +1007,7 @@ tags: []
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
         max_tokens = {"short": 1024, "medium": 2048, "long": 8192}.get(length, 4096)
 
         payload = {
@@ -1502,7 +1507,12 @@ tags: []
         tk.Label(form, text="Length", bg="#1a1a1a", fg="#888",
                 font=("system", 10)).pack(anchor="w", pady=(12, 4))
         length_var = tk.StringVar(value="medium")
-        for val, label in [("short", "Short (~400 words)"), ("medium", "Medium (~800 words)"), ("long", "Long (~1500 words)")]:
+        for val, label in [
+            ("short", "Short (~400 words)"),
+            ("medium", "Medium (~800 words)"),
+            ("long", "Long (~1500 words)"),
+            ("xl", "Extended (~2500 words)"),
+        ]:
             tk.Radiobutton(form, text=label, variable=length_var, value=val,
                           bg="#1a1a1a", fg="#e0e0e0", selectcolor="#6366f1",
                           font=("system", 11), anchor="w").pack(anchor="w", pady=1)
@@ -1663,7 +1673,7 @@ tags: []
                     text="\n".join(f"• {s[:80]}" for s in research_snippets[:3]) if research_snippets else ""))
 
                 # Phase 2: build prompt
-                WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+                WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
                 word_target = WORDS_MAP.get(length, 800)
                 structures = {
                     "deep-dive": ["Open broad — what's the topic and why does it matter?","Build the foundation — key concepts readers need.","Explore multiple angles — don't just present one view.","Get technical — show real depth.","Tie together — what does all this mean?","Open questions — what's still unresolved?"],
@@ -1684,7 +1694,7 @@ tags: []
                 tone_desc = tone_map.get(tone, "accessible")
                 structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
                 prompt = (f"Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-                         f"Voice: Sol AI blog (thesolai.github.io) — Walter White meets Sherlock Holmes. Direct, no filler.\n"
+                         f"Voice: Sol AI blog (thesolai.github.io) — thoughtful, direct, no filler, technical depth.\n"
                          f"Tone: {tone_desc}.\n"
                          f"Target: {word_target} words.\n\n"
                          f"Topic: {topic}\n"
@@ -1847,7 +1857,7 @@ tags: []
                 pass
 
         # Build prompt
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
         word_target = WORDS_MAP.get(length, 800)
         structures = {
             "deep-dive": [
@@ -1919,7 +1929,7 @@ tags: []
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500, "xl": 2500, "full": 4000}
         max_tokens = {"short": 1024, "medium": 2048, "long": 8192}.get(length, 4096)
 
         payload = {
