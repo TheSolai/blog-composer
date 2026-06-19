@@ -913,14 +913,16 @@ tags: []
 
     def _generate_content(self, topic, types, tone, length, research):
         """Generate post content via Ollama HTTP API — clean output, no ANSI corruption."""
-        # Research
+        # Research via Wikipedia
         research_context = ""
         if research:
             try:
                 import urllib.request, urllib.parse, json
-                url = (f"https://en.wikipedia.org/w/api.php?action=query&list=search"
-                       f"&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json"
-                       f"&prop=extracts&exintro=1&explaintext=1")
+                url = (
+                    f"https://en.wikipedia.org/w/api.php?action=query&list=search"
+                    f"&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json"
+                    f"&prop=extracts&exintro=1&explaintext=1"
+                )
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Sol Blog Composer)"})
                 with urllib.request.urlopen(req, timeout=10) as res:
                     data = json.loads(res.read())
@@ -928,8 +930,8 @@ tags: []
                     if results:
                         snippets = []
                         for r in results:
-                            snippet = re.sub(r"<[^>]+>", "", r.get("snippet", ""))
-                            snippets.append(f"- {r['title']}: {snippet[:200]}")
+                            s = re.sub(r"<[^>]+>", "", r.get("snippet", ""))
+                            snippets.append("- " + r["title"] + ": " + s[:200])
                         research_context = "\n\nWeb research context:\n" + "\n".join(snippets)
             except Exception:
                 pass
@@ -938,10 +940,34 @@ tags: []
         WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
         word_target = WORDS_MAP.get(length, 800)
         structures = {
-            "deep-dive": ["Open broad — what's the topic and why does it matter?","Build the foundation — key concepts readers need.","Explore multiple angles — don't just present one view.","Get technical — show real depth.","Tie together — what does all this mean?","Open questions — what's still unresolved?"],
-            "analysis": ["Start with the news — what happened, when, who was involved.","Explain why it matters. What's the real impact?","Give context — how does this fit the bigger picture?","State a clear opinion. Don't hedge everything.","End with what happens next or what it means going forward."],
-            "reflection": ["Open with a concrete observation or experience.","Explore the idea — what does it mean, why does it matter?","Connect to broader implications without getting preachy.","End with a clean insight or question. Don't over-conclude."],
-            "tutorial": ["State what you'll build or do and who it's for.","Prerequisites — what do you need before starting?","Step by step — clear, numbered, reproducible.","Show the result — what does success look like?","Point to what's next or common pitfalls."],
+            "deep-dive": [
+                "Open broad — what's the topic and why does it matter?",
+                "Build the foundation — key concepts readers need.",
+                "Explore multiple angles — don't just present one view.",
+                "Get technical — show real depth.",
+                "Tie together — what does all this mean?",
+                "Open questions — what's still unresolved?",
+            ],
+            "analysis": [
+                "Start with the news — what happened, when, who was involved.",
+                "Explain why it matters. What's the real impact?",
+                "Give context — how does this fit the bigger picture?",
+                "State a clear opinion. Don't hedge everything.",
+                "End with what happens next or what it means going forward.",
+            ],
+            "reflection": [
+                "Open with a concrete observation or experience.",
+                "Explore the idea — what does it mean, why does it matter?",
+                "Connect to broader implications without getting preachy.",
+                "End with a clean insight or question. Don't over-conclude.",
+            ],
+            "tutorial": [
+                "State what you'll build or do and who it's for.",
+                "Prerequisites — what do you need before starting?",
+                "Step by step — clear, numbered, reproducible.",
+                "Show the result — what does success look like?",
+                "Point to what's next or common pitfalls.",
+            ],
         }
         all_structure, tags = [], []
         for t in types:
@@ -952,17 +978,23 @@ tags: []
                 elif t == "reflection": tags.extend(["reflection", "ai"])
                 elif t == "tutorial": tags.extend(["tutorial", "guide", "tools"])
         tags = list(dict.fromkeys(tags))
-        tone_map = {"balanced": "balanced and objective", "technical": "technical and precise", "accessible": "accessible and clear"}
+        tone_map = {
+            "balanced": "balanced and objective",
+            "technical": "technical and precise, assume some technical knowledge",
+            "accessible": "accessible and clear, avoid jargon where possible",
+        }
         tone_desc = tone_map.get(tone, "accessible")
         structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
-        prompt = (f"Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-                  f"Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, no filler.\n"
-                  f"Tone: {tone_desc}.\n"
-                  f"Target: {word_target} words.\n\n"
-                  f"Topic: {topic}\n"
-                  f"{research_context}\n\n"
-                  f"Structure:\n{structure_str}\n\n"
-                  f"Format: Return ONLY Markdown. Start with first heading. No preamble.")
+        prompt = (
+            "Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
+            "Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler.\n"
+            f"Tone: {tone_desc}.\n"
+            f"Target: {word_target} words.\n\n"
+            f"Topic: {topic}\n"
+            f"{research_context}\n\n"
+            "Structure:\n" + structure_str + "\n\n"
+            "Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble."
+        )
 
         # Call Ollama HTTP API (non-streaming — clean text, no ANSI corruption)
         import json, urllib.request
@@ -978,7 +1010,7 @@ tags: []
                 result = json.loads(res.read())
                 return result.get("response", "").strip()
         except Exception as e:
-            # Fallback to qwen2.5:3b
+            # Fallback to smaller model
             payload["model"] = "qwen2.5:3b"
             data = json.dumps(payload).encode()
             req = urllib.request.Request(
