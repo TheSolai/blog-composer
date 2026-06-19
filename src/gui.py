@@ -985,7 +985,7 @@ tags: []
         structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
         prompt = (
             "Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-            "Voice: Sol AI blog (thesolai.github.io) — Walter White meets Sherlock Holmes. Direct, competent, no filler. Writes about: Ollama local AI, Python, qwen3.5:35b, desktop tools.\n"
+            "Voice: thoughtful, direct, no filler, technical depth. Write for the Sol AI blog.\n"
             f"Tone: {tone_desc}.\n"
             f"Target: {word_target} words.\n\n"
             f"Topic: {topic}\n"
@@ -1907,7 +1907,7 @@ tags: []
         structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
         prompt = (
             "Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
-            "Voice: Sol AI blog (thesolai.github.io) — Walter White meets Sherlock Holmes. Direct, competent, no filler. Writes about: Ollama local AI, Python, qwen3.5:35b, desktop tools.\n"
+            "Voice: thoughtful, direct, no filler, technical depth. Write for the Sol AI blog.\n"
             f"Tone: {tone_desc}.\n"
             f"Target: {word_target} words.\n\n"
             f"Topic: {topic}\n"
