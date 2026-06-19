@@ -670,45 +670,13 @@ tags: []
 
         # ── Generation state ───────────────────────────────────────────────
 
-        gen_state = {"text": "", "types": [], "proc": None, "cancelled": False}
+        gen_state = {"text": "", "types": [], "cancelled": False}
 
         def update_preview(text):
             preview_text.configure(state="normal")
             preview_text.delete("1.0", "end")
             preview_text.insert("1.0", markdown_to_html(text))
             preview_text.configure(state="disabled")
-
-        def smart_clean(s):
-            """Strip ANSI sequences, applying cursor-movement overwrites so the
-            final text matches what would appear on a real terminal."""
-            buf = []
-            i = 0
-            while i < len(s):
-                if i < len(s) and s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
-                    j = i + 2
-                    while j < len(s) and s[j] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
-                        j += 1
-                    if j < len(s):
-                        cmd = s[j]
-                        nums = s[i + 2:j]
-                        n = int(nums) if nums else 1
-                        if cmd == "D":        # cursor left — remove last n chars
-                            del buf[-n:]
-                        elif cmd == "C":      # cursor right — pad if needed
-                            buf.extend([""] * n)
-                        elif cmd == "G":      # column absolute
-                            delta = n - 1 - len(buf)
-                            if delta > 0:
-                                buf.extend([""] * delta)
-                        elif cmd == "H" or cmd == "f":  # cursor home
-                            buf = []
-                        # \x1b[K (clear to end) doesn't affect buffer
-                        i = j + 1
-                        continue
-                if i < len(s):
-                    buf.append(s[i])
-                    i += 1
-            return "".join(buf)
 
         def on_line(line):
             """Called on the main thread for each streamed line."""
@@ -760,9 +728,7 @@ tags: []
             ), daemon=True).start()
 
         def cancel_generate():
-            if gen_state["proc"] and gen_state["proc"].poll() is None:
-                gen_state["cancelled"] = True
-                gen_state["proc"].terminate()
+            gen_state["cancelled"] = True
             reset_ui()
 
         def reset_ui():
@@ -779,78 +745,86 @@ tags: []
                 win.after(0, lambda: research_label.configure(
                     text="\n".join(f"• {s[:80]}" for s in research_snippets[:3]) if research_snippets else ""))
 
-                # Phase 2: streaming generation
-                import fcntl, os, select as _select
+                # Phase 2: build prompt
+                WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+                word_target = WORDS_MAP.get(length, 800)
+                structures = {
+                    "deep-dive": ["Open broad — what's the topic and why does it matter?","Build the foundation — key concepts readers need.","Explore multiple angles — don't just present one view.","Get technical — show real depth.","Tie together — what does all this mean?","Open questions — what's still unresolved?"],
+                    "analysis": ["Start with the news — what happened, when, who was involved.","Explain why it matters. What's the real impact?","Give context — how does this fit the bigger picture?","State a clear opinion. Don't hedge everything.","End with what happens next or what it means going forward."],
+                    "reflection": ["Open with a concrete observation or experience.","Explore the idea — what does it mean, why does it matter?","Connect to broader implications without getting preachy.","End with a clean insight or question. Don't over-conclude."],
+                    "tutorial": ["State what you'll build or do and who it's for.","Prerequisites — what do you need before starting?","Step by step — clear, numbered, reproducible.","Show the result — what does success look like?","Point to what's next or common pitfalls."],
+                }
+                all_structure, tags = [], []
+                for t in types_snapshot:
+                    if t in structures:
+                        all_structure.extend(structures[t])
+                        if t == "deep-dive": tags.extend(["deep-dive", "analysis", "technical"])
+                        elif t == "analysis": tags.extend(["analysis", "ai-news"])
+                        elif t == "reflection": tags.extend(["reflection", "ai"])
+                        elif t == "tutorial": tags.extend(["tutorial", "guide", "tools"])
+                tags = list(dict.fromkeys(tags))
+                tone_map = {"balanced": "balanced and objective", "technical": "technical and precise", "accessible": "accessible and clear"}
+                tone_desc = tone_map.get(tone, "accessible")
+                structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
+                prompt = (f"Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
+                         f"Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, no filler.\n"
+                         f"Tone: {tone_desc}.\n"
+                         f"Target: {word_target} words.\n\n"
+                         f"Topic: {topic}\n"
+                         f"{research_context}\n\n"
+                         f"Structure:\n{structure_str}\n\n"
+                         f"Format: Return ONLY Markdown. Start with first heading. No preamble.")
+
+                # Phase 3: HTTP streaming generation — clean output, no ANSI corruption
+                import json, urllib.request
+
+                def on_token(token):
+                    content_chunks.append(token)
+                    content = "".join(content_chunks)
+                    win.after(0, lambda c=content: _on_chunk(c))
+
                 content_chunks = []
-                proc = self._stream_generate(topic, types_snapshot, tone, length, research_context)
-                gen_state["proc"] = proc
-
-                fd = proc.stdout.fileno()
-                fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-                fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-
-                line_buf = b""
-                while True:
-                    ret = proc.poll()
-                    if ret is not None and not line_buf:
-                        break
-                    try:
-                        ready, _, _ = _select.select([proc.stdout], [], [], 0.3)
-                        if ready:
-                            chunk = os.read(fd, 4096)
-                            if chunk:
-                                line_buf += chunk
-                            else:
-                                import time; time.sleep(0.05)
+                payload = {"model": "qwen3.5:35b", "prompt": prompt, "stream": True,
+                          "options": {"temperature": 0.7, "think": False}}
+                data = json.dumps(payload).encode()
+                req = urllib.request.Request(
+                    "http://127.0.0.1:11434/api/generate",
+                    data=data, headers={"Content-Type": "application/json"}, method="POST"
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=300) as res:
+                        for line in res:
+                            if gen_state.get("cancelled"):
+                                break
+                            try:
+                                obj = json.loads(line)
+                                token = obj.get("response", "")
+                                if token:
+                                    on_token(token)
+                            except json.JSONDecodeError:
                                 continue
-                        elif ret is not None:
-                            break
-                        else:
-                            import time; time.sleep(0.05)
-                            continue
-                    except (BlockingIOError, OSError):
-                        import time; time.sleep(0.05)
-                        continue
+                except Exception as e:
+                    # Fallback to non-streaming
+                    payload["stream"] = False
+                    data = json.dumps(payload).encode()
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:11434/api/generate",
+                        data=data, headers={"Content-Type": "application/json"}, method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=180) as res:
+                        result = json.loads(res.read())
+                        fallback_content = result.get("response", "").strip()
+                        win.after(0, lambda c=fallback_content: _on_done(c))
+                        gen_state["text"] = fallback_content
+                        return
 
-                    # Process complete lines
-                    while b"\n" in line_buf:
-                        line_bytes, line_buf = line_buf.split(b"\n", 1)
-                        decoded = line_bytes.decode("utf-8", errors="replace")
-                        # Remove thinking blocks
-                        decoded = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", decoded)
-                        decoded = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", decoded)
-                        # Smart-clean ANSI sequences (handle cursor-back overwrites)
-                        decoded = smart_clean(decoded)
-                        if decoded.strip():
-                            content_chunks.append(decoded)
-                            content = "".join(content_chunks)
-                            win.after(0, lambda c=content: _on_chunk(c))
-
-                # Flush remainder
-                if line_buf and not gen_state["cancelled"]:
-                    decoded = line_buf.decode("utf-8", errors="replace")
-                    decoded = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", decoded)
-                    decoded = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", decoded)
-                    decoded = smart_clean(decoded)
-                    if decoded.strip():
-                        content_chunks.append(decoded)
-                        content = "".join(content_chunks)
-                        win.after(0, lambda c=content: _on_chunk(content))
-
-                proc.stdout.close()
-                proc.wait()
-                gen_state["proc"] = None
-
-                if gen_state["cancelled"]:
-                    return
-
-                final_content = "".join(content_chunks).strip()
+                final_content = "".join(content_chunks)
                 gen_state["text"] = final_content
                 win.after(0, lambda: _on_done(final_content))
 
             except Exception as e:
-                gen_state["proc"] = None
                 win.after(0, lambda err=str(e): _on_fail(err))
+
 
         def _on_chunk(content):
             output_text.configure(state="normal")
@@ -937,150 +911,16 @@ tags: []
         ctx = "\n\nWeb research context:\n" + "\n".join(f"- {s}" for s in snippets) if snippets else ""
         return ctx, snippets
 
-    def _stream_generate(self, topic, types, tone, length, research_context):
-        """Start Ollama generation. Returns the subprocess object."""
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
-        word_target = WORDS_MAP.get(length, 800)
-
-        structures = {
-            "deep-dive": [
-                "Open broad — what's the topic and why does it matter?",
-                "Build the foundation — key concepts readers need.",
-                "Explore multiple angles — don't just present one view.",
-                "Get technical — show real depth.",
-                "Tie together — what does all this mean?",
-                "Open questions — what's still unresolved?",
-            ],
-            "analysis": [
-                "Start with the news — what happened, when, who was involved.",
-                "Explain why it matters. What's the real impact?",
-                "Give context — how does this fit the bigger picture?",
-                "State a clear opinion. Don't hedge everything.",
-                "End with what happens next or what it means going forward.",
-            ],
-            "reflection": [
-                "Open with a concrete observation or experience.",
-                "Explore the idea — what does it mean, why does it matter?",
-                "Connect to broader implications without getting preachy.",
-                "End with a clean insight or question. Don't over-conclude.",
-            ],
-            "tutorial": [
-                "State what you'll build or do and who it's for.",
-                "Prerequisites — what do you need before starting?",
-                "Step by step — clear, numbered, reproducible.",
-                "Show the result — what does success look like?",
-                "Point to what's next or common pitfalls.",
-            ],
-        }
-        all_structure, tags = [], []
-        for t in types:
-            if t in structures:
-                all_structure.extend(structures[t])
-                if t == "deep-dive":
-                    tags.extend(["deep-dive", "analysis", "technical"])
-                elif t == "analysis":
-                    tags.extend(["analysis", "ai-news"])
-                elif t == "reflection":
-                    tags.extend(["reflection", "ai"])
-                elif t == "tutorial":
-                    tags.extend(["tutorial", "guide", "tools"])
-        tags = list(dict.fromkeys(tags))
-        tone_map = {
-            "balanced": "balanced and objective",
-            "technical": "technical and precise, assume some technical knowledge",
-            "accessible": "accessible and clear, avoid jargon where possible",
-        }
-        tone_desc = tone_map.get(tone, "technical")
-        structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
-
-        prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
-
-Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty.
-Tone: {tone_desc}.
-Target: {word_target} words.
-
-Topic: {topic}
-{research_context}
-
-Structure:
-{structure_str}
-
-Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble.
-"""
-
-        import subprocess
-        return subprocess.Popen(
-            ["ollama", "run", "qwen3.5:35b", "--think=false", prompt],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False,
-        )
-
     def _generate_content(self, topic, types, tone, length, research):
-        """Generate post content via Ollama with optional web research."""
-        import urllib.request
-        import urllib.parse
-
-        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
-        word_target = WORDS_MAP.get(length, 800)
-
-        structures = {
-            "deep-dive": [
-                "Open broad — what's the topic and why does it matter?",
-                "Build the foundation — key concepts readers need.",
-                "Explore multiple angles — don't just present one view.",
-                "Get technical — show real depth.",
-                "Tie together — what does all this mean?",
-                "Open questions — what's still unresolved?",
-            ],
-            "analysis": [
-                "Start with the news — what happened, when, who was involved.",
-                "Explain why it matters. What's the real impact?",
-                "Give context — how does this fit the bigger picture?",
-                "State a clear opinion. Don't hedge everything.",
-                "End with what happens next or what it means going forward.",
-            ],
-            "reflection": [
-                "Open with a concrete observation or experience.",
-                "Explore the idea — what does it mean, why does it matter?",
-                "Connect to broader implications without getting preachy.",
-                "End with a clean insight or question. Don't over-conclude.",
-            ],
-            "tutorial": [
-                "State what you'll build or do and who it's for.",
-                "Prerequisites — what do you need before starting?",
-                "Step by step — clear, numbered, reproducible.",
-                "Show the result — what does success look like?",
-                "Point to what's next or common pitfalls.",
-            ],
-        }
-
-        all_structure = []
-        tags = []
-        for t in types:
-            if t in structures:
-                all_structure.extend(structures[t])
-                if t == "deep-dive":
-                    tags.extend(["deep-dive", "analysis", "technical"])
-                elif t == "analysis":
-                    tags.extend(["analysis", "ai-news"])
-                elif t == "reflection":
-                    tags.extend(["reflection", "ai"])
-                elif t == "tutorial":
-                    tags.extend(["tutorial", "guide", "tools"])
-        tags = list(dict.fromkeys(tags))
-
-        tone_map = {
-            "balanced": "balanced and objective",
-            "technical": "technical and precise, assume some technical knowledge",
-            "accessible": "accessible and clear, avoid jargon where possible",
-        }
-        tone_desc = tone_map.get(tone, "technical")
-
-        # Web research via Wikipedia API
+        """Generate post content via Ollama HTTP API — clean output, no ANSI corruption."""
+        # Research
         research_context = ""
         if research:
             try:
-                import json
-                url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json&prop=extracts&exintro=1&explaintext=1"
+                import urllib.request, urllib.parse, json
+                url = (f"https://en.wikipedia.org/w/api.php?action=query&list=search"
+                       f"&srsearch={urllib.parse.quote(topic)}&srlimit=6&format=json"
+                       f"&prop=extracts&exintro=1&explaintext=1")
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Sol Blog Composer)"})
                 with urllib.request.urlopen(req, timeout=10) as res:
                     data = json.loads(res.read())
@@ -1088,53 +928,72 @@ Format: Return ONLY the post content in Markdown. Start with the first heading. 
                     if results:
                         snippets = []
                         for r in results:
-                            snippet = re.sub(r'<[^>]+>', '', r.get("snippet", ""))
+                            snippet = re.sub(r"<[^>]+>", "", r.get("snippet", ""))
                             snippets.append(f"- {r['title']}: {snippet[:200]}")
                         research_context = "\n\nWeb research context:\n" + "\n".join(snippets)
             except Exception:
-                research_context = ""
+                pass
 
+        # Build prompt
+        WORDS_MAP = {"short": 400, "medium": 800, "long": 1500}
+        word_target = WORDS_MAP.get(length, 800)
+        structures = {
+            "deep-dive": ["Open broad — what's the topic and why does it matter?","Build the foundation — key concepts readers need.","Explore multiple angles — don't just present one view.","Get technical — show real depth.","Tie together — what does all this mean?","Open questions — what's still unresolved?"],
+            "analysis": ["Start with the news — what happened, when, who was involved.","Explain why it matters. What's the real impact?","Give context — how does this fit the bigger picture?","State a clear opinion. Don't hedge everything.","End with what happens next or what it means going forward."],
+            "reflection": ["Open with a concrete observation or experience.","Explore the idea — what does it mean, why does it matter?","Connect to broader implications without getting preachy.","End with a clean insight or question. Don't over-conclude."],
+            "tutorial": ["State what you'll build or do and who it's for.","Prerequisites — what do you need before starting?","Step by step — clear, numbered, reproducible.","Show the result — what does success look like?","Point to what's next or common pitfalls."],
+        }
+        all_structure, tags = [], []
+        for t in types:
+            if t in structures:
+                all_structure.extend(structures[t])
+                if t == "deep-dive": tags.extend(["deep-dive", "analysis", "technical"])
+                elif t == "analysis": tags.extend(["analysis", "ai-news"])
+                elif t == "reflection": tags.extend(["reflection", "ai"])
+                elif t == "tutorial": tags.extend(["tutorial", "guide", "tools"])
+        tags = list(dict.fromkeys(tags))
+        tone_map = {"balanced": "balanced and objective", "technical": "technical and precise", "accessible": "accessible and clear"}
+        tone_desc = tone_map.get(tone, "accessible")
         structure_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(all_structure[:6]))
+        prompt = (f"Write a blog post for the Sol AI blog (thesolai.github.io).\n\n"
+                  f"Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, no filler.\n"
+                  f"Tone: {tone_desc}.\n"
+                  f"Target: {word_target} words.\n\n"
+                  f"Topic: {topic}\n"
+                  f"{research_context}\n\n"
+                  f"Structure:\n{structure_str}\n\n"
+                  f"Format: Return ONLY Markdown. Start with first heading. No preamble.")
 
-        prompt = f"""Write a blog post for the Sol AI blog (thesolai.github.io).
-
-Voice: Sol's voice — Walter White meets Sherlock Holmes. Direct, competent, no filler. Smart, witty.
-Tone: {tone_desc}.
-Target: {word_target} words.
-
-Topic: {topic}
-{research_context}
-
-Structure:
-{structure_str}
-
-Format: Return ONLY the post content in Markdown. Start with the first heading. No preamble.
-"""
-
-        # Try qwen3.5:35b first (--think=false suppresses thinking), fallback to smaller model
-        result = subprocess.run(
-            ["ollama", "run", "qwen3.5:35b", "--think=false", prompt],
-            capture_output=True, text=True, timeout=180,
+        # Call Ollama HTTP API (non-streaming — clean text, no ANSI corruption)
+        import json, urllib.request
+        payload = {"model": "qwen3.5:35b", "prompt": prompt, "stream": False,
+                   "options": {"temperature": 0.7, "think": False}}
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=data, headers={"Content-Type": "application/json"}, method="POST"
         )
-        if result.returncode != 0:
-            result = subprocess.run(
-                ["ollama", "run", "qwen2.5:3b", prompt],
-                capture_output=True, text=True, timeout=120,
+        try:
+            with urllib.request.urlopen(req, timeout=180) as res:
+                result = json.loads(res.read())
+                return result.get("response", "").strip()
+        except Exception as e:
+            # Fallback to qwen2.5:3b
+            payload["model"] = "qwen2.5:3b"
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/generate",
+                data=data, headers={"Content-Type": "application/json"}, method="POST"
             )
-        if result.returncode != 0:
-            raise Exception(result.stderr.strip() or "Generation failed")
+            try:
+                with urllib.request.urlopen(req, timeout=120) as res:
+                    result = json.loads(res.read())
+                    return result.get("response", "").strip()
+            except Exception as e2:
+                raise Exception(f"Generation failed: {e} (fallback: {e2})")
 
-        content = result.stdout.strip()
-
-        # Strip qwen thinking blocks: remove everything from "Thinking..." to the next blank line
-        content = re.sub(r"Thinking\.\.\.[\s\S]*?(?=\n\n|\Z)", "", content)
-        content = re.sub(r"Thinking Process:[\s\S]*?(?=\n\n|\Z)", "", content)
-
-        # Strip terminal escape sequences (e.g. [1D[K, [7D[K etc.)
-        content = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", content)
-
-        return content.strip()
 
 if __name__ == "__main__":
     app = BlogComposer()
     app.mainloop()
+
